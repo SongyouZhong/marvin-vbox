@@ -30,17 +30,22 @@ vboxmanage sharedfolder remove "$VM_NAME" --name "shared" 2>/dev/null || true
 VM_STATE=$(vboxmanage showvminfo "$VM_NAME" --machinereadable | grep "VMState=" | head -1 | cut -d'"' -f2)
 
 if [ "$VM_STATE" = "running" ]; then
-    echo "      VM is running — adding as transient shared folder"
+    echo "      VM is running — adding as transient shared folder (will need re-run after VM restart)"
+    echo "      TIP: Power off the VM first, then run this script again to make it permanent."
     vboxmanage sharedfolder add "$VM_NAME" --name "shared" \
         --hostpath "$SHARED_HOST" \
-        --automount --auto-mount-point "Z:\\" \
+        --automount \
         --transient
 else
     echo "      VM is powered off — adding as permanent shared folder"
     vboxmanage sharedfolder add "$VM_NAME" --name "shared" \
         --hostpath "$SHARED_HOST" \
-        --automount --auto-mount-point "Z:\\"
+        --automount
 fi
+
+echo ""
+echo "Drive mapping in VM:"
+echo "  Y: -> \\\\VBoxSvr\\shared -> $SHARED_HOST"
 
 # 3. Install Python dependencies
 echo "[3/3] Installing Python dependencies..."

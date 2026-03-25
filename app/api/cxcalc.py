@@ -13,8 +13,10 @@ from app.services.vbox_service import (
     VBoxError,
     check_vm_running,
     generate_task_id,
+    get_preflight_result,
     get_shared_folder_path,
     run_cxcalc_on_vm,
+    run_vm_diagnostics,
     start_vm,
 )
 
@@ -82,10 +84,39 @@ def _merge_csv_contents(results: dict[str, str]) -> str:
 
 @router.get("/health")
 async def health():
-    """Check VM status and service health."""
+    """Check VM status and service health, including preflight results."""
     try:
         running = await check_vm_running()
-        return {"status": "ok", "vm_running": running, "vm_name": settings.vm_name}
+        result = {"status": "ok", "vm_running": running, "vm_name": settings.vm_name}
+        preflight = get_preflight_result()
+        if preflight:
+            result["preflight"] = preflight
+        return result
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "detail": str(e)},
+        )
+
+
+@router.get("/diagnostics")
+async def diagnostics():
+    """Run comprehensive VM environment diagnostics (may take 30-60 seconds)."""
+    try:
+        result = await run_vm_diagnostics()
+        all_ok = (
+            result["vboxmanage_available"]
+            and result["vm_exists"]
+            and result["vm_running"]
+            and result["guest_additions_ok"]
+            and result["cxcalc_available"]
+            and result["shared_folder_host_ok"]
+        )
+        return {
+            "status": "ok" if all_ok else "degraded",
+            "all_checks_passed": all_ok,
+            **result,
+        }
     except Exception as e:
         return JSONResponse(
             status_code=503,

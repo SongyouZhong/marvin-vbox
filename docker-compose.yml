@@ -1,0 +1,64 @@
+# =============================================================================
+# Marvin cxcalc API — Docker Compose 编排
+#
+# 架构:
+#   marvin-api:      FastAPI 服务 (Docker 容器)
+#   vm-manager:      VM 生命周期管理 (宿主机脚本, 通过 host network 访问 VirtualBox)
+#
+# 使用方式:
+#   启动服务:    docker compose up -d
+#   查看日志:    docker compose logs -f marvin-api
+#   停止服务:    docker compose down
+#   健康检查:    curl http://localhost:8111/api/v1/cxcalc/health
+# =============================================================================
+
+services:
+  marvin-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: marvin-cxcalc-api
+    restart: unless-stopped
+
+    # 必须使用 host 网络模式，因为需要访问宿主机的 VirtualBox
+    network_mode: host
+
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8111
+      - DEBUG=false
+      - VM_NAME=${VM_NAME:-Win11VM}
+      - VM_USERNAME=${VM_USERNAME:-marvin-box}
+      - VM_PASSWORD=${VM_PASSWORD:-123123}
+      - SHARED_FOLDER_HOST=/data/shared
+      - SHARED_FOLDER_VM=Y:\
+      - CXCALC_PATH=C:\Progra~2\ChemAxon\MarvinBeans\bin\cxcalc.bat
+      - COMMAND_TIMEOUT=${COMMAND_TIMEOUT:-600}
+      - AUTO_START_VM=${AUTO_START_VM:-true}
+
+    volumes:
+      # 挂载宿主机的 vboxmanage 二进制文件
+      - /usr/bin/vboxmanage:/usr/bin/vboxmanage:ro
+      # 挂载 VirtualBox 运行时所需的库和配置
+      - /usr/lib/virtualbox:/usr/lib/virtualbox:ro
+      - /etc/vbox:/etc/vbox:ro
+      # 挂载宿主机用户的 VBox 配置 (让容器内 vboxmanage 能找到 VM)
+      - ${HOME}/.config/VirtualBox:/root/.config/VirtualBox:ro
+      - "${VBOX_USER_HOME:-${HOME}/VirtualBox VMs}:/root/VirtualBox VMs:ro"
+      # 共享文件夹 — 宿主机和 VM 都需要访问
+      - ${SHARED_FOLDER_HOST:-/home/data/vbox_shared}:/data/shared
+      # 挂载 /tmp/.vbox* (VirtualBox IPC)
+      - /tmp:/tmp
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8111/api/v1/cxcalc/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

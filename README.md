@@ -370,8 +370,20 @@ vboxmanage guestproperty enumerate "Win11VM" | grep -i addition
 vboxmanage showvminfo "Win11VM" | grep -i "shared"
 
 # 在 VM 中手动挂载（以管理员身份运行 cmd）
-# net use Z: \\vboxsvr\shared
+# net use Y: \\vboxsvr\shared
 ```
+
+> **盘符说明（实际验证）**：
+> - `Z:` = 已有的 `marvin-vbox` 项目目录共享（`/home/songyou/projects/marvin-vbox/`）
+> - `Y:` = `setup_shared_folder.sh` 添加的 `shared` 文件夹（`/home/data/vbox_shared/`）
+>
+> 可用 `net use` 命令在 VM 中查看当前盘符映射：
+> ```bash
+> vboxmanage guestcontrol "Win11VM" run \
+>   --exe "C:\Windows\System32\cmd.exe" \
+>   --username "marvin-box" --password "123123" \
+>   --wait-stdout -- cmd.exe /c "net use"
+> ```
 
 ### API 无法连接 VM
 ```bash
@@ -388,17 +400,138 @@ vboxmanage guestcontrol "Win11VM" run \
 
 ---
 
+## Docker 部署（推荐）
+
+### 快速部署（已有 VM 的情况）
+
+```bash
+# 1. 一键部署
+./deploy.sh
+
+# 2. 验证
+curl http://localhost:8111/api/v1/cxcalc/health
+```
+
+### 全新部署（使用 OVA 镜像）
+
+OVA 镜像已上传至 MinIO，直接下载后部署：
+
+```bash
+# 1. 从 MinIO 下载 OVA 镜像（需要 mc 客户端）
+mkdir -p images
+mc cp myminio/aidd-files/marvin-vbox/Win11VM-marvin.ova ./images/
+
+# 或使用 Python 脚本下载（需 minio 包）
+# micromamba run -n marvin-vbox python3 -c "
+# from minio import Minio
+# c = Minio('172.19.80.100:9090', 'admin', 'minio_test_password_2025', secure=False)
+# c.fget_object('aidd-files', 'marvin-vbox/Win11VM-marvin.ova', 'images/Win11VM-marvin.ova')
+# "
+
+# 2. 在目标机器上导入 OVA 并部署
+./deploy.sh --ova ./images/Win11VM-marvin.ova
+```
+
+### Docker Compose 手动操作
+
+```bash
+# 构建并启动
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+
+# 停止
+docker compose down
+
+# 重新构建（代码更新后）
+docker compose up -d --build
+```
+
+### VM 管理
+
+```bash
+./scripts/vm-manager.sh status    # 查看 VM 状态
+./scripts/vm-manager.sh start     # 启动 VM
+./scripts/vm-manager.sh stop      # 安全关机
+./scripts/vm-manager.sh restart   # 重启 VM
+./scripts/vm-manager.sh check     # 检查 Guest Additions 和 cxcalc 可用性
+```
+
+### OVA 镜像管理
+
+**当前镜像位置（MinIO）**:
+- Endpoint: `172.19.80.100:9090`
+- Bucket/Object: `aidd-files/marvin-vbox/Win11VM-marvin.ova`（11.85 GB）
+
+```bash
+# 从 MinIO 下载镜像
+mkdir -p images
+mc cp myminio/aidd-files/marvin-vbox/Win11VM-marvin.ova ./images/
+
+# 导出当前 VM 并上传到 MinIO（VM 更新后执行）
+./scripts/export-ova.sh
+micromamba run -n marvin-vbox python3 scripts/upload_ova_to_minio.py \
+    --file images/Win11VM-marvin.ova
+
+# 在新机器导入本地 OVA
+./scripts/import-ova.sh ./images/Win11VM-marvin.ova
+```
+
+### 环境变量配置
+
+复制 `.env.example` 为 `.env` 并根据实际环境修改：
+
+```bash
+cp .env.example .env
+vim .env
+```
+
+### 部署架构说明
+
+```
+┌─────────────────────────────────────────────┐
+│  Linux 宿主机                                │
+│                                              │
+│  ┌──────────────────────────────────┐        │
+│  │  Docker Container (marvin-api)    │        │
+│  │  ┌────────────────────────────┐  │        │
+│  │  │  FastAPI (Uvicorn :8111)   │  │        │
+│  │  │  └─ /api/v1/cxcalc/*      │  │        │
+│  │  └──────────┬─────────────────┘  │        │
+│  │             │ vboxmanage (挂载)   │        │
+│  └─────────────┼────────────────────┘        │
+│                │                              │
+│  ┌─────────────▼────────────────────┐        │
+│  │  VirtualBox (宿主机进程)          │        │
+│  │  ┌───────────────────────────┐   │        │
+│  │  │  Win11VM (headless)       │   │        │
+│  │  │  ├─ Java 8 (32-bit)      │   │        │
+│  │  │  ├─ MarvinBeans/cxcalc    │   │        │
+│  │  │  └─ Y:\ (shared folder)  │   │        │
+│  │  └───────────────────────────┘   │        │
+│  └──────────────────────────────────┘        │
+│                                              │
+│  /home/data/vbox_shared/ ←→ Y:\ (双向同步)    │
+└──────────────────────────────────────────────┘
+```
+
+---
+
 ## 项目结构
 
 ```
 marvin-vbox/
 ├── README.md                    # 本文档
 ├── run.py                       # FastAPI 服务入口（Uvicorn）
+├── Dockerfile                   # Docker 镜像构建
+├── docker-compose.yml           # Docker Compose 编排
+├── deploy.sh                    # 一键部署脚本
+├── .env.example                 # 环境变量模板
+├── .dockerignore                # Docker 构建忽略
 ├── run_cacalc.sh                # 手动命令行脚本（SMILES 计算）
 ├── setup_shared_folder.sh       # 一次性共享文件夹配置脚本
 ├── requirements.txt             # Python 依赖
-├── Marvin.zip                   # ChemAxon MarvinBeans 安装包
-├── jre-8u202-windows-i586.exe   # Java 运行环境安装包
 ├── app/
 │   ├── main.py                  # FastAPI 应用（CORS、路由注册）
 │   ├── config.py                # 配置管理（环境变量）
@@ -406,4 +539,12 @@ marvin-vbox/
 │   │   └── cxcalc.py            # API 路由（/calculate, /health）
 │   └── services/
 │       └── vbox_service.py      # VBoxManage 封装（guestcontrol + 共享文件夹）
+├── scripts/
+│   ├── export-ova.sh            # 导出 VM 为 OVA 镜像
+│   ├── import-ova.sh            # 导入 OVA 镜像
+│   ├── vm-manager.sh            # VM 生命周期管理
+│   ├── docker-entrypoint.sh     # Docker 容器启动入口
+│   └── upload_ova_to_minio.py   # OVA 分片上传到 MinIO
+├── images/                      # OVA 镜像存放目录 (gitignore)
+└── DEPLOYMENT.md                # 部署操作记录
 ```

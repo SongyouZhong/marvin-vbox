@@ -14,10 +14,12 @@ class Settings:
 
     # Paths
     shared_folder_host: str = os.getenv("SHARED_FOLDER_HOST", "/home/data/vbox_shared")
-    shared_folder_vm: str = os.getenv("SHARED_FOLDER_VM", r"Z:\shared")
+    # VM drive letter where /home/data/vbox_shared is automounted (VBox shared folder name: "shared")
+    shared_folder_vm: str = os.getenv("SHARED_FOLDER_VM", r"Y:\")
+    # Use 8.3 short path to avoid quoting issues in cmd.exe; PowerShell supports full path too
     cxcalc_path: str = os.getenv(
         "CXCALC_PATH",
-        r"C:\Program Files (x86)\ChemAxon\MarvinBeans\bin\cxcalc.bat",
+        r"C:\Progra~2\ChemAxon\MarvinBeans\bin\cxcalc.bat",
     )
 
     # Timeouts (seconds)
