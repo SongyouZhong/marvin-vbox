@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test script: run all three cxcalc commands on Win11VM via vboxmanage guestcontrol.
-Results are written to /home/data/vbox_shared/ (Y: in VM).
+Results are written to /home/data/marvin_vbox_sharad/ (Y: in VM).
 """
 import base64
 import subprocess
@@ -14,7 +14,7 @@ PASS = "123123"
 CXCALC = r"C:\Progra~2\ChemAxon\MarvinBeans\bin\cxcalc.bat"
 SDF = r"Z:\test_api.sdf"
 OUT_DIR = r"Y:"
-HOST_OUT = "/home/data/vbox_shared"
+HOST_OUT = "/home/data/marvin_vbox_sharad"
 
 COMMANDS = {
     "molecular_properties": (

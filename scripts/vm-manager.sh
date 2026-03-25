@@ -160,7 +160,7 @@ cmd_check() {
 
     echo ""
     echo "4. 共享文件夹..."
-    local shared_host="${SHARED_FOLDER_HOST:-/home/data/vbox_shared}"
+    local shared_host="${SHARED_FOLDER_HOST:-/home/data/marvin_vbox_sharad}"
     if [ -d "$shared_host" ]; then
         echo "   [OK] 宿主机共享文件夹存在: $shared_host"
     else

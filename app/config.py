@@ -13,8 +13,8 @@ class Settings:
     vm_password: str = os.getenv("VM_PASSWORD", "123123")
 
     # Paths
-    shared_folder_host: str = os.getenv("SHARED_FOLDER_HOST", "/home/data/vbox_shared")
-    # VM drive letter where /home/data/vbox_shared is automounted (VBox shared folder name: "shared")
+    shared_folder_host: str = os.getenv("SHARED_FOLDER_HOST", "/home/data/marvin_vbox_sharad")
+    # VM drive letter where /home/data/marvin_vbox_sharad is automounted (VBox shared folder name: "shared")
     shared_folder_vm: str = os.getenv("SHARED_FOLDER_VM", r"Y:\")
     # Use 8.3 short path to avoid quoting issues in cmd.exe; PowerShell supports full path too
     cxcalc_path: str = os.getenv(

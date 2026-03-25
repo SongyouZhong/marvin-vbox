@@ -27,7 +27,7 @@ Marvin cxcalc API 是一个 Python FastAPI 服务，通过 VirtualBox `guestcont
 **容器设计要点**：
 - 容器使用 `network_mode: host`，确保能访问宿主机 VirtualBox 进程
 - 通过 volume 挂载 `/usr/bin/vboxmanage`、`/usr/lib/virtualbox`、`~/.config/VirtualBox`，避免在容器内安装 VirtualBox
-- 共享文件夹 `/home/data/vbox_shared` 双向挂载，容器与 VM 均可读写
+- 共享文件夹 `/home/data/marvin_vbox_sharad` 双向挂载，容器与 VM 均可读写
 
 ### 2.2 脚本工具
 
@@ -157,7 +157,7 @@ micromamba run -n marvin-vbox python3 scripts/upload_ova_to_minio.py \
 │  │                                              │        │
 │  │  [挂载] /usr/bin/vboxmanage (宿主机)         │        │
 │  │  [挂载] ~/.config/VirtualBox  (宿主机)       │        │
-│  │  [挂载] /home/data/vbox_shared ←──────────┐ │        │
+│  │  [挂载] /home/data/marvin_vbox_sharad ←────┐ │        │
 │  └────────────────────────────────────────────┼─┘        │
 │                                               │          │
 │  ┌────────────────────────────────────────────┼──┐       │

@@ -8,7 +8,7 @@
 
 set -e
 
-SHARED_HOST="/home/data/vbox_shared"
+SHARED_HOST="/home/data/marvin_vbox_sharad"
 VM_NAME="Win11VM"
 
 echo "=== Marvin cxcalc API - Shared Folder Setup ==="

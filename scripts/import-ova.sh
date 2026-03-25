@@ -19,7 +19,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 OVA_PATH="${1:-}"
 VM_NAME="${VM_NAME:-Win11VM}"
-SHARED_HOST="${SHARED_FOLDER_HOST:-/home/data/vbox_shared}"
+SHARED_HOST="${SHARED_FOLDER_HOST:-/home/data/marvin_vbox_sharad}"
 
 if [ -z "$OVA_PATH" ]; then
     echo "用法: $0 <ova-path>"

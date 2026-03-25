@@ -18,7 +18,7 @@
 #   VM_NAME             VM 名称 (默认: Win11VM)
 #   VM_USERNAME         VM 用户名 (默认: marvin-box)
 #   VM_PASSWORD         VM 密码 (默认: 123123)
-#   SHARED_FOLDER_HOST  共享文件夹路径 (默认: /home/data/vbox_shared)
+#   SHARED_FOLDER_HOST  共享文件夹路径 (默认: /home/data/marvin_vbox_sharad)
 # =============================================================================
 set -euo pipefail
 
@@ -28,7 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OVA_PATH=""
 REBUILD=false
 VM_NAME="${VM_NAME:-Win11VM}"
-SHARED_FOLDER_HOST="${SHARED_FOLDER_HOST:-/home/data/vbox_shared}"
+SHARED_FOLDER_HOST="${SHARED_FOLDER_HOST:-/home/data/marvin_vbox_sharad}"
 
 # 解析参数
 while [[ $# -gt 0 ]]; do

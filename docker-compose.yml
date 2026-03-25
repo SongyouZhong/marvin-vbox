@@ -46,7 +46,7 @@ services:
       - ${HOME}/.config/VirtualBox:/root/.config/VirtualBox:ro
       - "${VBOX_USER_HOME:-${HOME}/VirtualBox VMs}:/root/VirtualBox VMs:ro"
       # 共享文件夹 — 宿主机和 VM 都需要访问
-      - ${SHARED_FOLDER_HOST:-/home/data/vbox_shared}:/data/shared
+      - ${SHARED_FOLDER_HOST:-/home/data/marvin_vbox_sharad}:/data/shared
       # 挂载 /tmp/.vbox* (VirtualBox IPC)
       - /tmp:/tmp
 

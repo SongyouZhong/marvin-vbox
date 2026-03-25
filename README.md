@@ -203,7 +203,7 @@ cd /home/songyou/projects/marvin-vbox
 ```
 
 该脚本会：
-1. 创建宿主机共享目录 `/home/data/vbox_shared`
+1. 创建宿主机共享目录 `/home/data/marvin_vbox_sharad`
 2. 配置 VirtualBox 共享文件夹，自动挂载到 VM 的 `Z:\shared`
 3. 安装 Python 依赖（fastapi, uvicorn, python-multipart）
 
@@ -211,12 +211,12 @@ cd /home/songyou/projects/marvin-vbox
 
 ```bash
 # 创建宿主机共享目录
-sudo mkdir -p /home/data/vbox_shared
-sudo chown -R $USER:$USER /home/data/vbox_shared
+sudo mkdir -p /home/data/marvin_vbox_sharad
+sudo chown -R $USER:$USER /home/data/marvin_vbox_sharad
 
 # 添加共享文件夹到 VM（VM 关机状态下执行）
 vboxmanage sharedfolder add "Win11VM" --name "shared" \
-  --hostpath "/home/data/vbox_shared" \
+  --hostpath "/home/data/marvin_vbox_sharad" \
   --automount --auto-mount-point "Z:\\"
 
 # 安装 Python 依赖
@@ -337,7 +337,7 @@ vboxmanage guestcontrol "Win11VM" run \
 | `VM_NAME` | `Win11VM` | VirtualBox 虚拟机名称 |
 | `VM_USERNAME` | `marvin-box` | VM Windows 用户名 |
 | `VM_PASSWORD` | `123123` | VM Windows 密码 |
-| `SHARED_FOLDER_HOST` | `/home/data/vbox_shared` | 宿主机共享目录路径 |
+| `SHARED_FOLDER_HOST` | `/home/data/marvin_vbox_sharad` | 宿主机共享目录路径 |
 | `SHARED_FOLDER_VM` | `Z:\shared` | VM 中共享目录路径 |
 | `CXCALC_PATH` | `C:\Program Files (x86)\ChemAxon\MarvinBeans\bin\cxcalc.bat` | cxcalc 在 VM 中的路径 |
 | `COMMAND_TIMEOUT` | `600` | 命令超时时间（秒） |
@@ -375,7 +375,7 @@ vboxmanage showvminfo "Win11VM" | grep -i "shared"
 
 > **盘符说明（实际验证）**：
 > - `Z:` = 已有的 `marvin-vbox` 项目目录共享（`/home/songyou/projects/marvin-vbox/`）
-> - `Y:` = `setup_shared_folder.sh` 添加的 `shared` 文件夹（`/home/data/vbox_shared/`）
+> - `Y:` = `setup_shared_folder.sh` 添加的 `shared` 文件夹（`/home/data/marvin_vbox_sharad/`）
 >
 > 可用 `net use` 命令在 VM 中查看当前盘符映射：
 > ```bash
@@ -512,7 +512,7 @@ vim .env
 │  │  └───────────────────────────┘   │        │
 │  └──────────────────────────────────┘        │
 │                                              │
-│  /home/data/vbox_shared/ ←→ Y:\ (双向同步)    │
+│  /home/data/marvin_vbox_sharad/ ←→ Y:\ (双向同步)    │
 └──────────────────────────────────────────────┘
 ```
 
