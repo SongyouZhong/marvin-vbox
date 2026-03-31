@@ -301,6 +301,77 @@ print(result["data"])  # 合并后的 CSV 内容
 
 ---
 
+## 完整处理流程
+
+下图展示了从用户发起计算请求到结果写入数据库的完整链路：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 用户/前端
+    participant IDB as idw-backend<br/>(FastAPI)
+    participant DB as PostgreSQL
+    participant MVB as marvin-vbox<br/>(FastAPI :8111)
+    participant FS as 共享文件夹<br/>/home/data/marvin_vbox_sharad
+    participant VBX as VBoxManage
+    participant VM as Win11 VM<br/>(VirtualBox)
+    participant CX as cxcalc.bat<br/>(ChemAxon)
+
+    User->>IDB: POST /api/v1/cx-compute/calculate<br/>{project_id, compound_ids, calc_types}
+    IDB->>IDB: 验证用户身份 (JWT)
+
+    IDB->>DB: 查询 project_compound 表<br/>(molfile / SMILES)
+    DB-->>IDB: 返回化合物列表
+
+    IDB->>IDB: build_sdf()<br/>构建 SDF 文件<br/>Name = project_compound_id
+
+    IDB->>MVB: POST /api/v1/cxcalc/calculate<br/>multipart: file=compounds.sdf<br/>params: calc_types, merge=true, auto_start_vm=true<br/>(httpx 同步, timeout=600s)
+
+    alt VM 未运行
+        MVB->>VBX: vboxmanage startvm Win11VM --type headless
+        VBX->>VM: 启动 VM
+        loop 等待 Guest Additions 就绪 (最多 150s)
+            MVB->>VBX: guestcontrol run cmd.exe /c echo ready
+            VBX-->>MVB: 检测响应
+        end
+    end
+
+    MVB->>FS: 写入 {task_id}.sdf
+
+    loop 每种 calc_type (molecular_properties / logs / logd)
+        Note over MVB: acquire _vm_lock (串行化)
+        MVB->>MVB: 构建 PowerShell 命令<br/>Base64 编码 (UTF-16LE)
+        MVB->>VBX: vboxmanage guestcontrol run<br/>powershell.exe -EncodedCommand ...
+        VBX->>VM: 在 VM 内执行 PowerShell
+        VM->>CX: cxcalc.bat -i "Name" "Y:\{task_id}.sdf"<br/>molecularpolarizability dipole fsp3 psa logp pka...<br/>Out-File "Y:\{task_id}_{type}.csv" -Encoding UTF8
+        CX-->>VM: 计算完成，写入 CSV
+        VM-->>FS: CSV 通过共享文件夹同步到宿主机
+        VBX-->>MVB: 返回退出码
+        MVB->>FS: 读取 {task_id}_{type}.csv (等待最多10s)
+        FS-->>MVB: CSV 内容
+        MVB->>FS: 删除 {task_id}_{type}.csv
+        Note over MVB: release _vm_lock
+    end
+
+    MVB->>FS: 删除 {task_id}.sdf
+    MVB->>MVB: _merge_csv_contents()<br/>按行索引合并多份 CSV → 统一 TSV
+    MVB-->>IDB: JSON { task_id, merged:true, data: TSV内容 }
+
+    IDB->>IDB: parse_merged_tsv()<br/>按 Name 列匹配化合物<br/>解析 logS/logD pH 曲线列<br/>pH 7.4 线性插值
+
+    IDB->>DB: bulk_upsert() → cx_compute_result 表<br/>(id = project_compound_id)
+    DB-->>IDB: 返回已保存记录数
+
+    IDB-->>User: { total, success, failed, errors }
+```
+
+> **数据流向说明**：
+> - 中间文件（SDF、CSV）仅存在于共享文件夹中，计算完成后立即清理
+> - marvin-vbox API 不持久化任何结果，仅作为计算中间层返回 TSV 数据
+> - 最终结果由 idw-backend 解析后写入 PostgreSQL `cx_compute_result` 表
+
+---
+
 ## 8. 手动命令行使用 (Shell)
 
 不通过 API，直接用 shell 脚本调用 cxcalc：

@@ -73,8 +73,21 @@ if [ -z "$VM_INFO" ]; then
     echo "      1. 导入 OVA: ./deploy.sh --ova ./images/Win11VM-marvin.ova"
     echo "      2. 或修改 VM_NAME 环境变量为已有的 VM 名称"
     echo ""
-    echo "环境检测失败: 目标 VM 不存在，无法继续"
-    exit 1
+    echo -e "${YELLOW}[WARN] VM 未找到，API 仍将启动但计算功能不可用${NC}"
+    echo ""
+    # 写入空的 preflight 结果
+    cat > /tmp/vm_preflight_result.json <<INNEREOF
+{
+    "vboxmanage_version": "${VBOX_VERSION}",
+    "vm_name": "${VM_NAME}",
+    "vm_state": "not_found",
+    "checks_passed": ${CHECKS_PASSED},
+    "checks_failed": ${CHECKS_FAILED},
+    "checks_warned": ${CHECKS_WARNED}
+}
+INNEREOF
+    echo "[INFO] 启动 FastAPI 服务 (降级模式)..."
+    exec "$@"
 fi
 
 VM_STATE=$(echo "$VM_INFO" | grep "^VMState=" | head -1 | cut -d'"' -f2 || echo "unknown")

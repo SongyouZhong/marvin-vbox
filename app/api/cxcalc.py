@@ -39,36 +39,125 @@ CALC_ARGS = {
 }
 
 
-def _merge_csv_contents(results: dict[str, str]) -> str:
-    """Merge multiple CSV outputs by joining columns on the row index."""
-    parsed: dict[str, list[dict[str, str]]] = {}
-    for calc_type, content in results.items():
-        reader = csv.DictReader(io.StringIO(content), delimiter="\t")
-        parsed[calc_type] = list(reader)
+def _fix_double_column_tsv(content: str) -> str:
+    """
+    Fix cxcalc logS output where each pH value occupies two tab-columns
+    (value + empty). Collapse them into single columns to match the headers.
 
-    if not parsed:
+    cxcalc 'logs' outputs 15 pH headers but 30 data values (value\tempty per pH).
+    This function detects and fixes the mismatch.
+    """
+    lines = content.strip().split("\n")
+    if len(lines) < 2:
+        return content
+
+    headers = lines[0].split("\t")
+    # Strip trailing empty headers
+    while headers and headers[-1].strip() == "":
+        headers.pop()
+    num_headers = len(headers)
+
+    fixed_lines = ["\t".join(headers)]
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        values = line.split("\t")
+        if len(values) > num_headers * 1.5:
+            # Double-column detected: take every other value starting from index 1
+            # Index 0 is Name, then pairs of (value, empty) for each pH column
+            fixed_values = [values[0]]  # Name
+            for j in range(1, len(values), 2):
+                fixed_values.append(values[j])
+            # Trim to match header count
+            fixed_values = fixed_values[:num_headers]
+            fixed_lines.append("\t".join(fixed_values))
+        else:
+            fixed_lines.append("\t".join(values[:num_headers]))
+
+    return "\n".join(fixed_lines) + "\n"
+
+
+def _parse_tsv_manually(content: str, section_label: str) -> tuple[list[str], list[dict[str, str]]]:
+    """
+    Parse a TSV content into (columns, rows) with a section label prefix
+    for pH columns to distinguish logS vs logD in the merged output.
+
+    pH columns like 'pH=0.0' are renamed to 'logs_pH=0.0' or 'logd_pH=0.00'.
+    """
+    lines = content.strip().split("\n")
+    if not lines:
+        return [], []
+
+    headers = lines[0].split("\t")
+    while headers and headers[-1].strip() == "":
+        headers.pop()
+
+    # Rename pH columns with section prefix
+    renamed = []
+    for h in headers:
+        h_stripped = h.strip()
+        if h_stripped.startswith("pH="):
+            renamed.append(f"{section_label}_{h_stripped}")
+        else:
+            renamed.append(h_stripped)
+
+    rows = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        values = line.split("\t")
+        row = {}
+        for idx, col in enumerate(renamed):
+            row[col] = values[idx] if idx < len(values) else ""
+        rows.append(row)
+
+    return renamed, rows
+
+
+def _merge_csv_contents(results: dict[str, str]) -> str:
+    """Merge multiple CSV outputs by joining columns on the row index.
+
+    Handles:
+    - cxcalc logS double-column bug (value+empty per pH)
+    - Prefixes pH columns with 'logs_' or 'logd_' to avoid name collisions
+      and enable downstream section-based parsing
+    """
+    if not results:
         return ""
 
-    # Use the first result set as the base
-    first_key = next(iter(parsed))
-    base_rows = parsed[first_key]
-    num_rows = len(base_rows)
-
-    # Collect all column names (preserving order, deduplicating)
     all_columns: list[str] = []
     seen: set[str] = set()
-    for rows in parsed.values():
-        if rows:
-            for col in rows[0].keys():
-                if col not in seen:
-                    all_columns.append(col)
-                    seen.add(col)
+    parsed_rows: list[list[dict[str, str]]] = []
 
-    # Merge rows by index
+    for calc_type, content in results.items():
+        section_label = calc_type  # e.g. "logs", "logd", "molecular_properties"
+
+        # Fix logS double-column issue
+        if calc_type == "logs":
+            content = _fix_double_column_tsv(content)
+
+        if calc_type in ("logs", "logd"):
+            columns, rows = _parse_tsv_manually(content, section_label)
+        else:
+            reader = csv.DictReader(io.StringIO(content), delimiter="\t")
+            rows = list(reader)
+            columns = list(rows[0].keys()) if rows else []
+
+        for col in columns:
+            if col not in seen:
+                all_columns.append(col)
+                seen.add(col)
+        parsed_rows.append(rows)
+
+    if not parsed_rows:
+        return ""
+
+    num_rows = max(len(rows) for rows in parsed_rows) if parsed_rows else 0
+
     merged_rows: list[dict[str, str]] = []
     for i in range(num_rows):
         merged_row: dict[str, str] = {}
-        for calc_type, rows in parsed.items():
+        for rows in parsed_rows:
             if i < len(rows):
                 for k, v in rows[i].items():
                     if k not in merged_row:

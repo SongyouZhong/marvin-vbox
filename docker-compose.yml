@@ -3,14 +3,16 @@
 #
 # 架构:
 #   marvin-api:      FastAPI 服务 (Docker 容器)
-#   vm-manager:      VM 生命周期管理 (宿主机脚本, 通过 host network 访问 VirtualBox)
+#   宿主机运行 VirtualBox VM, 容器通过挂载 vboxmanage + IPC 与之通信
 #
 # 使用方式:
-#   启动服务:    docker compose up -d
-#   查看日志:    docker compose logs -f marvin-api
-#   停止服务:    docker compose down
+#   启动服务:    docker-compose up -d
+#   查看日志:    docker-compose logs -f marvin-api
+#   停止服务:    docker-compose down
 #   健康检查:    curl http://localhost:8111/api/v1/cxcalc/health
 # =============================================================================
+
+version: "3.8"
 
 services:
   marvin-api:
@@ -23,10 +25,16 @@ services:
     # 必须使用 host 网络模式，因为需要访问宿主机的 VirtualBox
     network_mode: host
 
+    # 共享宿主机 PID 命名空间，让容器 VBoxManage 能检测到宿主机 VBoxSVC 进程
+    pid: host
+
+    # 以宿主机用户身份运行，确保能访问 VBox IPC socket (/tmp/.vbox-songyou-ipc/)
+    user: "1003:1003"
+
     environment:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8111
-      - DEBUG=false
+      - DEBUG=${DEBUG:-false}
       - VM_NAME=${VM_NAME:-Win11VM}
       - VM_USERNAME=${VM_USERNAME:-marvin-box}
       - VM_PASSWORD=${VM_PASSWORD:-123123}
@@ -34,24 +42,35 @@ services:
       - SHARED_FOLDER_VM=Y:\
       - CXCALC_PATH=C:\Progra~2\ChemAxon\MarvinBeans\bin\cxcalc.bat
       - COMMAND_TIMEOUT=${COMMAND_TIMEOUT:-600}
-      - AUTO_START_VM=${AUTO_START_VM:-true}
+      - AUTO_START_VM=${AUTO_START_VM:-false}
+      # VBox IPC: 告诉 vboxmanage 使用宿主机用户的 IPC socket
+      - VBOX_IPC_SOCKETID=songyou
+      # 确保容器内用户环境一致
+      - HOME=/home/songyou
+      - USER=songyou
+      - LOGNAME=songyou
 
     volumes:
-      # 挂载宿主机的 vboxmanage 二进制文件
+      # 挂载宿主机的 vboxmanage 二进制和库
+      - /usr/bin/VBox:/usr/bin/VBox:ro
       - /usr/bin/vboxmanage:/usr/bin/vboxmanage:ro
-      # 挂载 VirtualBox 运行时所需的库和配置
       - /usr/lib/virtualbox:/usr/lib/virtualbox:ro
       - /etc/vbox:/etc/vbox:ro
-      # 挂载宿主机用户的 VBox 配置 (让容器内 vboxmanage 能找到 VM)
-      - ${HOME}/.config/VirtualBox:/root/.config/VirtualBox:ro
-      - "${VBOX_USER_HOME:-${HOME}/VirtualBox VMs}:/root/VirtualBox VMs:ro"
-      # 共享文件夹 — 宿主机和 VM 都需要访问
-      - ${SHARED_FOLDER_HOST:-/home/data/marvin_vbox_sharad}:/data/shared
-      # 挂载 /tmp/.vbox* (VirtualBox IPC)
-      - /tmp:/tmp
+      # VBox 用户配置 (仅 VirtualBox.xml，让容器自建 compreg.dat)
+      - /home/songyou/.config/VirtualBox/VirtualBox.xml:/home/songyou/.config/VirtualBox/VirtualBox.xml:ro
+      # VM 数据目录 (VBox config 引用了此路径)
+      - "/home/songyou/VirtualBox VMs:/home/songyou/VirtualBox VMs:ro"
+      # 共享文件夹 — 宿主机和 VM 都需要访问 (读写)
+      - /home/data/marvin_vbox_sharad:/data/shared
+      # VirtualBox IPC socket
+      - /tmp/.vbox-songyou-ipc:/tmp/.vbox-songyou-ipc
+
+    devices:
+      - /dev/vboxdrv:/dev/vboxdrv
+      - /dev/vboxdrvu:/dev/vboxdrvu
 
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8111/api/v1/cxcalc/health')"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8111/api/v1/cxcalc/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -1,0 +1,4 @@
+smiles,title
+Cc1cc(-c2c(C)nn(C)c2C)ccc1-c1nnc(NCc2ccc3nccn3c2)[nH]1,cpd1
+CN(Cc1ccc2nccn2c1)c1nnn(-c2ccc(-c3ccccc3Cl)cc2)n1,cpd2
+CN(Cc1ccc2nccn2c1)C(=O)NCc1ccc(-c2ccccc2Cl)cc1,cpd3

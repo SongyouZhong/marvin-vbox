@@ -1,6 +1,9 @@
 # Docker
 .env
 
+# Git
+.git/
+
 # Python
 __pycache__/
 *.pyc
@@ -16,6 +19,7 @@ build/
 *.vbox-prev
 *.vdi
 *.vmdk
+images/
 
 # IDE
 .idea/
