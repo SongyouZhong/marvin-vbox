@@ -46,6 +46,7 @@ services:
       # Platform 集成（Redis 等配置由 Platform 注册时下发）
       - PLATFORM_URL=${PLATFORM_URL}
       - WORKER_HOSTNAME=${WORKER_HOSTNAME:-marvin-vbox-001}
+      - NODE_ID=${NODE_ID:-marvin-vbox-001}
       # VBox IPC: 告诉 vboxmanage 使用宿主机用户的 IPC socket
       - VBOX_IPC_SOCKETID=songyou
       # 确保容器内用户环境一致

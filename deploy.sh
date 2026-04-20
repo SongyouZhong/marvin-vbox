@@ -234,6 +234,13 @@ if [[ -n "$WORKER_HOSTNAME" ]]; then
     echo "  Worker 主机名: $WORKER_HOSTNAME"
 fi
 
+# 确保 NODE_ID 固定（默认等于 WORKER_HOSTNAME，保证容器重建后 node_id 不变）
+EFFECTIVE_HOSTNAME="${WORKER_HOSTNAME:-$(grep '^WORKER_HOSTNAME=' .env 2>/dev/null | cut -d'=' -f2- || echo 'marvin-vbox-001')}"
+if ! grep -q '^NODE_ID=' .env 2>/dev/null; then
+    echo "NODE_ID=${EFFECTIVE_HOSTNAME}" >> .env
+    echo "  Node ID: ${EFFECTIVE_HOSTNAME} (固定)"
+fi
+
 if [ "$REBUILD" = true ]; then
     echo "  重新构建镜像..."
     $DOCKER_COMPOSE build --no-cache

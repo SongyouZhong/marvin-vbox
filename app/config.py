@@ -49,8 +49,8 @@ class Settings:
     platform_url: str = os.getenv("PLATFORM_URL", "")
     worker_hostname: str = os.getenv("WORKER_HOSTNAME", "marvin-vbox-001")
 
-    # 节点标识（自动生成，与 Node Agent 一致）
-    node_id: str = _generate_node_id(os.getenv("WORKER_HOSTNAME", "marvin-vbox-001"))
+    # 节点标识（优先使用 NODE_ID 环境变量，保证容器重建后不变）
+    node_id: str = os.getenv("NODE_ID") or _generate_node_id(os.getenv("WORKER_HOSTNAME", "marvin-vbox-001"))
 
     # 注册后由 Platform 下发的运行时配置（内存中，不落盘）
     redis: Dict[str, Any] = {}
