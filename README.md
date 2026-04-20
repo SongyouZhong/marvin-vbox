@@ -10,10 +10,11 @@
 - [4. 安装 VirtualBox Guest Additions](#4-安装-virtualbox-guest-additions)
 - [5. 安装 MarvinBeans (cxcalc)](#5-安装-marvinbeans-cxcalc)
 - [6. 配置共享文件夹 & 启动 API](#6-配置共享文件夹--启动-api)
-- [7. API 使用说明](#7-api-使用说明)
-- [8. 手动命令行使用 (Shell)](#8-手动命令行使用-shell)
-- [9. 配置项](#9-配置项)
-- [10. 故障排查](#10-故障排查)
+- [7. Worker 模式 & 平台集成](#7-worker-模式--平台集成)
+- [8. API 使用说明](#8-api-使用说明)
+- [9. 手动命令行使用 (Shell)](#9-手动命令行使用-shell)
+- [10. 配置项](#10-配置项)
+- [11. 故障排查](#11-故障排查)
 
 ---
 
@@ -239,9 +240,74 @@ python run.py
 
 ---
 
-## 7. API 使用说明
+## 7. Worker 模式 & 平台集成
 
-### 7.1 健康检查
+marvin-vbox 同时运行 **REST API 服务** 和 **CxCalcWorker**（Redis 队列消费者），由 `run.py` 通过 `asyncio.gather` 并发启动。
+
+CxCalcWorker 的注册机制与 **aidd-toolkit Node Agent 完全对齐**：启动时只需 `PLATFORM_URL`，向 Platform 注册为节点，所有基础设施配置（Redis、心跳间隔等）由 Platform 统一下发。
+
+### 7.1 架构概览
+
+```
+aidd-platform (8333)                      marvin-vbox (8111)
+┌───────────────────────┐                 ┌──────────────────────────────┐
+│                       │                 │  run.py                      │
+│  POST /nodes/register │◄── 注册 ────────│  ├─ FastAPI (REST :8111)     │
+│  → 返回 redis 配置     │                 │  └─ CxCalcWorker             │
+│    heartbeat_interval │                 │     ├─ _register_node()      │
+│    worker_env         │                 │     ├─ _heartbeat_loop()     │
+│                       │                 │     │   (Redis HSET)         │
+│  Redis (下发的配置)    │                 │     └─ _consume_loop()       │
+│  LPUSH cxcalc queue  ─┼────────────────►│         BRPOP 取任务         │
+│  HSET 心跳 key       ◄┼────────────────┤         心跳上报              │
+└───────────────────────┘                 └──────────────────────────────┘
+```
+
+### 7.2 启动流程
+
+```
+                只需配置 PLATFORM_URL
+                        │
+                        ▼
+        ┌───────────────────────────────┐
+        │ POST /api/v1/nodes/register   │
+        │  → 获取 redis{host,port,db}   │
+        │  → 获取 heartbeat_interval    │
+        │  → 获取 worker_env           │
+        └───────────────┬───────────────┘
+                        │ 成功
+                        ▼
+              连接 Redis (Platform 下发)
+                        │
+              ┌─────────┴──────────┐
+              ▼                    ▼
+      Redis HSET 心跳       BRPOP 消费循环
+      (与 Node Agent 一致)   aidd:queue:service:cxcalc
+```
+
+1. **节点注册**：CxCalcWorker 启动时自动生成 `node_id`（算法与 Node Agent 一致：`hostname-mac_hash[:8]`），向 `POST {PLATFORM_URL}/api/v1/nodes/register` 注册。Platform 返回完整的基础设施配置（Redis 连接信息、心跳间隔、worker_env 等）。
+2. **连接 Redis**：使用 Platform 下发的 `redis.host`/`redis.port`/`redis.db` 构建连接 URL。
+3. **心跳**：通过 Redis `HSET aidd:nodes:{node_id}:info` 上报状态（与 Node Agent 相同机制），key 设置 TTL = `heartbeat_interval * 3`。
+4. **消费循环**：从 `aidd:queue:service:cxcalc` BRPOP 取任务，执行 VM 计算，结果回写到 Redis。
+
+> **降级安全**：Platform 不可达时，若 `.env` 中设置了 `REDIS_URL` 环境变量则用作 fallback；Redis 不可达时降级为仅 REST 模式。
+
+### 7.3 与 Node Agent 的对比
+
+| 对比项 | Node Agent (aidd-toolkit) | CxCalcWorker (marvin-vbox) |
+|--------|--------------------------|---------------------------|
+| 注册 API | `POST /api/v1/nodes/register` | **相同** |
+| 配置获取 | 注册响应下发 redis/registry/worker_env | **相同** |
+| node_id 生成 | `hostname-mac_hash[:8]` | **相同** |
+| 心跳机制 | Redis HSET + TTL | **相同** |
+| Worker 管理 | 监听 cmd_channel，动态启停子进程 | 自身即 Worker，直接消费 |
+| 部署方式 | Docker 容器内运行 Agent | Docker 容器内运行 FastAPI + Worker |
+
+---
+
+## 8. API 使用说明
+
+### 8.1 健康检查
 
 ```bash
 curl http://localhost:8111/api/v1/cxcalc/health
@@ -252,7 +318,7 @@ curl http://localhost:8111/api/v1/cxcalc/health
 {"status": "ok", "vm_running": true, "vm_name": "Win11VM"}
 ```
 
-### 7.2 执行计算
+### 8.2 执行计算
 
 **执行所有计算（molecular_properties + logs + logd），自动合并结果：**
 ```bash
@@ -276,7 +342,7 @@ curl -X POST http://localhost:8111/api/v1/cxcalc/calculate \
   -F "merge=false"
 ```
 
-### 7.3 计算类型说明
+### 8.3 计算类型说明
 
 | calc_type | cxcalc 参数 | 说明 |
 |-----------|------------|------|
@@ -285,7 +351,7 @@ curl -X POST http://localhost:8111/api/v1/cxcalc/calculate \
 | `logd` | `logd` | 分配系数 (logD) |
 | `all` | 以上全部 | 执行三组计算并合并 |
 
-### 7.4 Python 调用示例
+### 8.4 Python 调用示例
 
 ```python
 import requests
@@ -302,6 +368,8 @@ print(result["data"])  # 合并后的 CSV 内容
 ---
 
 ## 完整处理流程
+
+### REST 直接调用（idw-backend → marvin-vbox）
 
 下图展示了从用户发起计算请求到结果写入数据库的完整链路：
 
@@ -370,9 +438,47 @@ sequenceDiagram
 > - marvin-vbox API 不持久化任何结果，仅作为计算中间层返回 TSV 数据
 > - 最终结果由 idw-backend 解析后写入 PostgreSQL `cx_compute_result` 表
 
+### Worker 模式（aidd-platform → Redis → CxCalcWorker）
+
+Worker 模式下，CxCalcWorker 通过 Node Agent 相同的注册 API 获取配置，然后从 Redis 队列消费任务：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant PF as aidd-platform<br/>(调度器)
+    participant REG as Platform API<br/>/api/v1/nodes/register
+    participant Redis as Redis<br/>(Platform 下发)
+    participant WK as CxCalcWorker<br/>(marvin-vbox)
+    participant VM as Win11 VM
+
+    Note over WK: === 启动阶段（与 Node Agent 对齐） ===
+    WK->>REG: POST /api/v1/nodes/register<br/>{node_id, hostname, capabilities:["cxcalc"]}
+    REG-->>WK: {redis:{host,port,db}, heartbeat_interval, worker_env}
+    WK->>WK: settings.apply_register_response()<br/>配置 Redis 连接
+
+    loop 每 heartbeat_interval 秒
+        WK->>Redis: HSET aidd:nodes:{node_id}:info<br/>{status:"online", last_heartbeat:...}
+        WK->>Redis: EXPIRE key (heartbeat_interval * 3)
+    end
+
+    Note over WK: === 任务消费 ===
+    PF->>Redis: LPUSH aidd:queue:service:cxcalc<br/>+ HSET aidd:tasks:{task_id}
+
+    WK->>Redis: BRPOP aidd:queue:service:cxcalc (timeout=5s)
+    Redis-->>WK: task_id
+    WK->>Redis: HGETALL aidd:tasks:{task_id}
+    Redis-->>WK: {sdf_content, calc_types, ...}
+
+    WK->>VM: 写入 SDF → cxcalc 计算 → 合并 TSV
+    VM-->>WK: 计算结果 (merged TSV)
+
+    WK->>Redis: HSET aidd:tasks:{task_id}<br/>status=completed, result=TSV
+    WK->>Redis: LPUSH aidd:queue:completed task_id
+```
+
 ---
 
-## 8. 手动命令行使用 (Shell)
+## 9. 手动命令行使用 (Shell)
 
 不通过 API，直接用 shell 脚本调用 cxcalc：
 
@@ -396,7 +502,7 @@ vboxmanage guestcontrol "Win11VM" run \
 
 ---
 
-## 9. 配置项
+## 10. 配置项
 
 所有配置均支持通过环境变量覆盖：
 
@@ -409,13 +515,17 @@ vboxmanage guestcontrol "Win11VM" run \
 | `VM_USERNAME` | `marvin-box` | VM Windows 用户名 |
 | `VM_PASSWORD` | `123123` | VM Windows 密码 |
 | `SHARED_FOLDER_HOST` | `/home/data/marvin_vbox_sharad` | 宿主机共享目录路径 |
-| `SHARED_FOLDER_VM` | `Z:\shared` | VM 中共享目录路径 |
-| `CXCALC_PATH` | `C:\Program Files (x86)\ChemAxon\MarvinBeans\bin\cxcalc.bat` | cxcalc 在 VM 中的路径 |
+| `SHARED_FOLDER_VM` | `Y:\` | VM 中共享目录路径 |
+| `CXCALC_PATH` | `C:\Progra~2\ChemAxon\MarvinBeans\bin\cxcalc.bat` | cxcalc 在 VM 中的路径（8.3 短路径） |
 | `COMMAND_TIMEOUT` | `600` | 命令超时时间（秒） |
+| `REDIS_URL` | *(空)* | 可选 fallback，仅在节点注册失败时使用 |
+| `PLATFORM_URL` | *(必填)* | aidd-platform API 地址，通过 `deploy.sh -s` 指定（**唯一必须配置项**） |
+| `WORKER_HOSTNAME` | `marvin-vbox-001` | Worker 注册时使用的主机名 |
+| `AUTO_START_VM` | `false` | 容器启动时是否自动启动 VM |
 
 ---
 
-## 10. 故障排查
+## 11. 故障排查
 
 ### KVM 冲突
 ```bash
@@ -476,12 +586,20 @@ vboxmanage guestcontrol "Win11VM" run \
 ### 快速部署（已有 VM 的情况）
 
 ```bash
-# 1. 一键部署
-./deploy.sh
+# 1. 一键部署（-s 指定 Platform 地址，首次必填；之后复用 .env 中的值）
+./deploy.sh -s 10.18.85.10:8333
+
+# 支持完整 URL（K8s / HTTPS 部署）
+./deploy.sh --server https://platform.createrna.com
+
+# 指定 Worker 主机名（多机部署时区分节点）
+./deploy.sh -s 10.18.85.10:8333 --hostname marvin-vbox-002
 
 # 2. 验证
 curl http://localhost:8111/api/v1/cxcalc/health
 ```
+
+> **注意**：`-s/--server` 支持 `host:port`（自动补全 `http://`）和完整 URL 两种格式，与 aidd-toolkit Node Agent 保持一致。
 
 ### 全新部署（使用 OVA 镜像）
 
@@ -500,7 +618,7 @@ mc cp myminio/aidd-files/marvin-vbox/Win11VM-marvin.ova ./images/
 # "
 
 # 2. 在目标机器上导入 OVA 并部署
-./deploy.sh --ova ./images/Win11VM-marvin.ova
+./deploy.sh -s 10.18.85.10:8333 --ova ./images/Win11VM-marvin.ova
 ```
 
 ### Docker Compose 手动操作
@@ -551,40 +669,46 @@ micromamba run -n marvin-vbox python3 scripts/upload_ova_to_minio.py \
 
 ### 环境变量配置
 
-复制 `.env.example` 为 `.env` 并根据实际环境修改：
+推荐通过 `deploy.sh -s` 参数自动写入 `.env`。如需手动配置：
 
 ```bash
 cp .env.example .env
+# 修改 PLATFORM_URL 为实际 Platform 地址
 vim .env
 ```
 
 ### 部署架构说明
 
 ```
-┌─────────────────────────────────────────────┐
-│  Linux 宿主机                                │
-│                                              │
-│  ┌──────────────────────────────────┐        │
-│  │  Docker Container (marvin-api)    │        │
-│  │  ┌────────────────────────────┐  │        │
-│  │  │  FastAPI (Uvicorn :8111)   │  │        │
-│  │  │  └─ /api/v1/cxcalc/*      │  │        │
-│  │  └──────────┬─────────────────┘  │        │
-│  │             │ vboxmanage (挂载)   │        │
-│  └─────────────┼────────────────────┘        │
-│                │                              │
-│  ┌─────────────▼────────────────────┐        │
-│  │  VirtualBox (宿主机进程)          │        │
-│  │  ┌───────────────────────────┐   │        │
-│  │  │  Win11VM (headless)       │   │        │
-│  │  │  ├─ Java 8 (32-bit)      │   │        │
-│  │  │  ├─ MarvinBeans/cxcalc    │   │        │
-│  │  │  └─ Y:\ (shared folder)  │   │        │
-│  │  └───────────────────────────┘   │        │
-│  └──────────────────────────────────┘        │
-│                                              │
-│  /home/data/marvin_vbox_sharad/ ←→ Y:\ (双向同步)    │
-└──────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  Linux 宿主机                                            │
+│                                                          │
+│  ┌──────────────────────────────────┐   ┌─────────────┐ │
+│  │  Docker Container (marvin-api)    │   │ aidd-platform│ │
+│  │  ┌────────────────────────────┐  │   │  (:8333)     │ │
+│  │  │  run.py                    │  │   └──────┬──────┘ │
+│  │  │  ├─ FastAPI (REST :8111)   │  │          │        │
+│  │  │  └─ CxCalcWorker           │  │   POST /nodes/    │
+│  │  │     ├─ _register_node() ───┼──┼──► register      │
+│  │  │     │   (获取 Redis 配置)   │  │   ◄─ redis 配置  │
+│  │  │     ├─ _heartbeat_loop() ──┼──┼──► Redis (:30685) │
+│  │  │     └─ _consume_loop()  ───┼──┼──► BRPOP 队列    │
+│  │  └──────────┬─────────────────┘  │                    │
+│  │             │ vboxmanage (挂载)   │                    │
+│  └─────────────┼────────────────────┘                    │
+│                │                                          │
+│  ┌─────────────▼────────────────────┐                    │
+│  │  VirtualBox (宿主机进程)          │                    │
+│  │  ┌───────────────────────────┐   │                    │
+│  │  │  Win11VM (headless)       │   │                    │
+│  │  │  ├─ Java 8 (32-bit)      │   │                    │
+│  │  │  ├─ MarvinBeans/cxcalc    │   │                    │
+│  │  │  └─ Y:\ (shared folder)  │   │                    │
+│  │  └───────────────────────────┘   │                    │
+│  └──────────────────────────────────┘                    │
+│                                                          │
+│  /home/data/marvin_vbox_sharad/ ←→ Y:\ (双向同步)        │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -605,9 +729,12 @@ marvin-vbox/
 ├── requirements.txt             # Python 依赖
 ├── app/
 │   ├── main.py                  # FastAPI 应用（CORS、路由注册）
-│   ├── config.py                # 配置管理（环境变量）
+│   ├── config.py                # 配置管理（Platform 注册 + 动态配置下发）
 │   ├── api/
 │   │   └── cxcalc.py            # API 路由（/calculate, /health）
+│   ├── worker/
+│   │   ├── cxcalc_worker.py     # CxCalcWorker（Redis 队列消费 + VM 计算）
+│   │   └── client.py            # WorkerClient（注册 / 心跳 / 注销）
 │   └── services/
 │       └── vbox_service.py      # VBoxManage 封装（guestcontrol + 共享文件夹）
 ├── scripts/

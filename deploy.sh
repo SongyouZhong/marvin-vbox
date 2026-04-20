@@ -10,9 +10,17 @@
 #   5. 验证部署
 #
 # 用法:
-#   ./deploy.sh                           # 使用已有 VM，部署 API
-#   ./deploy.sh --ova ./images/Win11VM-marvin.ova  # 导入 OVA 后部署
-#   ./deploy.sh --rebuild                 # 重新构建镜像
+#   ./deploy.sh -s 10.18.85.10:8333                        # 指定 Platform 地址
+#   ./deploy.sh --server https://platform.createrna.com    # 支持完整 URL
+#   ./deploy.sh -s 10.18.85.10:8333 --ova ./images/Win11VM-marvin.ova
+#   ./deploy.sh --rebuild                                  # 重新构建镜像
+#
+# 选项:
+#   -s, --server   Platform 地址 (host:port 或完整 URL)，首次部署必填
+#   --ova          导入 OVA 镜像路径
+#   --rebuild      重新构建 Docker 镜像
+#   --hostname     Worker 主机名 (默认: marvin-vbox-001)
+#   -h, --help     显示帮助
 #
 # 环境变量:
 #   VM_NAME             VM 名称 (默认: Win11VM)
@@ -27,12 +35,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # 默认值
 OVA_PATH=""
 REBUILD=false
+PLATFORM_SERVER=""
+WORKER_HOSTNAME=""
 VM_NAME="${VM_NAME:-Win11VM}"
 SHARED_FOLDER_HOST="${SHARED_FOLDER_HOST:-/home/data/marvin_vbox_sharad}"
 
 # 解析参数
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -s|--server)
+            PLATFORM_SERVER="$2"
+            shift 2
+            ;;
+        --hostname)
+            WORKER_HOSTNAME="$2"
+            shift 2
+            ;;
         --ova)
             OVA_PATH="$2"
             shift 2
@@ -42,7 +60,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --help|-h)
-            head -20 "$0" | grep "^#" | sed 's/^# \?//'
+            sed -n '2,/^# =====/{ /^#/!d; s/^# \{0,1\}//; p }' "$0"
             exit 0
             ;;
         *)
@@ -52,9 +70,31 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# 规范化 Platform URL（与 node_agent 一致：裸地址自动补 http://）
+normalize_url() {
+    local addr="$1"
+    if [[ "$addr" =~ ^https?:// ]]; then
+        echo "$addr"
+    else
+        echo "http://$addr"
+    fi
+}
+
+if [[ -n "$PLATFORM_SERVER" ]]; then
+    PLATFORM_URL=$(normalize_url "$PLATFORM_SERVER")
+else
+    PLATFORM_URL=""
+fi
+
 echo "=============================================="
 echo "  Marvin cxcalc API — 一键部署"
 echo "=============================================="
+if [[ -n "$PLATFORM_URL" ]]; then
+    echo "  Platform:  $PLATFORM_URL"
+fi
+if [[ -n "$WORKER_HOSTNAME" ]]; then
+    echo "  Hostname:  $WORKER_HOSTNAME"
+fi
 echo ""
 
 # =============================================================================
@@ -72,8 +112,14 @@ if ! command -v docker &>/dev/null; then
     MISSING+=("Docker")
 fi
 
-if ! docker compose version &>/dev/null 2>&1; then
-    MISSING+=("Docker Compose V2")
+# 兼容 docker compose V2 和 docker-compose V1
+DOCKER_COMPOSE=""
+if docker compose version &>/dev/null 2>&1; then
+    DOCKER_COMPOSE="docker compose"
+elif command -v docker-compose &>/dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    MISSING+=("Docker Compose (V1 docker-compose 或 V2 docker compose)")
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -88,7 +134,7 @@ fi
 
 echo "  VirtualBox: $(vboxmanage --version)"
 echo "  Docker:     $(docker --version | cut -d' ' -f3 | tr -d ',')"
-echo "  Compose:    $(docker compose version --short)"
+echo "  Compose:    $($DOCKER_COMPOSE version --short 2>/dev/null || $DOCKER_COMPOSE version 2>/dev/null | head -1)"
 echo "  [OK] 所有依赖已就绪"
 
 # =============================================================================
@@ -150,22 +196,53 @@ echo "[Step 4/5] 构建并启动 Docker 服务..."
 
 cd "$SCRIPT_DIR"
 
-# 创建 .env (如果不存在)
+# 创建或更新 .env 配置
 if [ ! -f .env ]; then
     echo "  生成 .env 配置文件..."
     cp .env.example .env
-    echo "  [INFO] 已创建 .env，请根据需要修改配置"
+    echo "  [INFO] 已创建 .env"
+fi
+
+# 如果用户通过 --server 指定了 Platform 地址，写入 .env
+if [[ -n "$PLATFORM_URL" ]]; then
+    if grep -q '^PLATFORM_URL=' .env 2>/dev/null; then
+        sed -i "s|^PLATFORM_URL=.*|PLATFORM_URL=${PLATFORM_URL}|" .env
+    else
+        echo "PLATFORM_URL=${PLATFORM_URL}" >> .env
+    fi
+    echo "  Platform URL: $PLATFORM_URL"
+else
+    # 没有通过参数指定，检查 .env 中是否已配置
+    EXISTING_URL=$(grep '^PLATFORM_URL=' .env 2>/dev/null | cut -d'=' -f2- || true)
+    if [[ -z "$EXISTING_URL" ]]; then
+        echo "  [ERROR] 未指定 Platform 地址"
+        echo "  请使用 -s/--server 参数指定，例如:"
+        echo "    $0 -s 10.18.85.10:8333"
+        echo "    $0 --server https://platform.createrna.com"
+        exit 1
+    fi
+    echo "  Platform URL: $EXISTING_URL (来自 .env)"
+fi
+
+# 如果用户通过 --hostname 指定了 Worker 主机名，写入 .env
+if [[ -n "$WORKER_HOSTNAME" ]]; then
+    if grep -q '^WORKER_HOSTNAME=' .env 2>/dev/null; then
+        sed -i "s|^WORKER_HOSTNAME=.*|WORKER_HOSTNAME=${WORKER_HOSTNAME}|" .env
+    else
+        echo "WORKER_HOSTNAME=${WORKER_HOSTNAME}" >> .env
+    fi
+    echo "  Worker 主机名: $WORKER_HOSTNAME"
 fi
 
 if [ "$REBUILD" = true ]; then
     echo "  重新构建镜像..."
-    docker compose build --no-cache
+    $DOCKER_COMPOSE build --no-cache
 else
-    docker compose build
+    $DOCKER_COMPOSE build
 fi
 
 echo "  启动容器..."
-docker compose up -d
+$DOCKER_COMPOSE up -d
 
 echo "  [OK] 容器已启动"
 
@@ -202,9 +279,9 @@ echo "  Swagger 文档: http://localhost:8111/docs"
 echo "  健康检查:     http://localhost:8111/api/v1/cxcalc/health"
 echo ""
 echo "  管理命令:"
-echo "    查看日志:    docker compose logs -f"
-echo "    停止服务:    docker compose down"
-echo "    重启服务:    docker compose restart"
+echo "    查看日志:    $DOCKER_COMPOSE logs -f"
+echo "    停止服务:    $DOCKER_COMPOSE down"
+echo "    重启服务:    $DOCKER_COMPOSE restart"
 echo "    VM 管理:     ./scripts/vm-manager.sh {status|start|stop|check}"
 echo ""
 echo "  测试命令:"
