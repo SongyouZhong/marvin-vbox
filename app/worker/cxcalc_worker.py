@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 
 import httpx
 import redis.asyncio as redis
+from rdkit import Chem
+from rdkit.Chem import AllChem
 
 from app.config import settings
 from app.services.vbox_service import run_cxcalc_on_vm, get_shared_folder_path, start_vm, VBoxError
@@ -335,19 +337,21 @@ class CxCalcWorker:
     @staticmethod
     def _build_sdf(smiles_list: list[str]) -> str:
         """
-        将 SMILES 列表转为简易 SDF（仅包含 SMILES 属性）。
-        cxcalc 使用 -i Name 选项从 SDF 的分子名称行读取标识。
+        用 RDKit 将 SMILES 列表转为标准 SDF。
+        分子名称行（SDF 第一行）设为 SMILES 字符串，
+        供 cxcalc -i Name 读取，也用于结果回溯匹配。
+        无法解析的 SMILES 会被跳过并记录警告。
         """
-        parts = []
-        for idx, smiles in enumerate(smiles_list):
-            molblock = f"""{smiles}
-     RDKit          3D
-
-  0  0  0  0  0  0  0  0  0  0999 V2000
-M  END
-> <SMILES>
-{smiles}
-
-$$$$"""
-            parts.append(molblock)
-        return "\n".join(parts)
+        import io
+        buf = io.StringIO()
+        writer = Chem.SDWriter(buf)
+        for smiles in smiles_list:
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is None:
+                logger.warning("无法解析 SMILES，将跳过: %s", smiles)
+                continue
+            mol.SetProp("_Name", smiles)  # SDF 首行 = SMILES，供 cxcalc -i Name 使用
+            AllChem.Compute2DCoords(mol)
+            writer.write(mol)
+        writer.close()
+        return buf.getvalue()

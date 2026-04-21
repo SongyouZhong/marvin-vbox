@@ -2,19 +2,51 @@
 """
 Test script: run all three cxcalc commands on Win11VM via vboxmanage guestcontrol.
 Results are written to /home/data/marvin_vbox_sharad/ (Y: in VM).
+
+Input: real SDF generated from SMILES via RDKit (Compute2DCoords).
+The SDF molecule name line is set to the SMILES string so cxcalc -i Name
+can use it as the row identifier in the TSV output.
 """
 import base64
 import subprocess
 import os
 import time
+from io import StringIO
+
+from rdkit import Chem
+from rdkit.Chem import AllChem
 
 VM = "Win11VM"
 USER = "marvin-box"
 PASS = "123123"
 CXCALC = r"C:\Progra~2\ChemAxon\MarvinBeans\bin\cxcalc.bat"
-SDF = r"Z:\test_api.sdf"
+SDF = r"Y:\test_api.sdf"
 OUT_DIR = r"Y:"
 HOST_OUT = "/home/data/marvin_vbox_sharad"
+
+# Sample SMILES for testing (aspirin, caffeine, ibuprofen)
+TEST_SMILES = [
+    "CC(=O)Oc1ccccc1C(=O)O",
+    "Cn1c(=O)c2c(ncn2C)n(c1=O)C",
+    "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+]
+
+
+def build_sdf(smiles_list: list[str]) -> str:
+    """Generate a real SDF from SMILES using RDKit."""
+    buf = StringIO()
+    writer = Chem.SDWriter(buf)
+    for smiles in smiles_list:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            print(f"  [!] Cannot parse SMILES, skipping: {smiles}")
+            continue
+        mol.SetProp("_Name", smiles)  # name line = SMILES for -i Name
+        AllChem.Compute2DCoords(mol)
+        writer.write(mol)
+    writer.close()
+    return buf.getvalue()
+
 
 COMMANDS = {
     "molecular_properties": (
@@ -72,8 +104,16 @@ def read_result(filename: str) -> str | None:
 
 def main():
     print("=== cxcalc API Test ===")
-    print(f"SDF: {SDF} (Z: = /home/songyou/projects/marvin-vbox/)")
-    print(f"Output: {HOST_OUT}")
+
+    # Generate real SDF from test SMILES and write to shared folder
+    os.makedirs(HOST_OUT, exist_ok=True)
+    sdf_host_path = os.path.join(HOST_OUT, "test_api.sdf")
+    sdf_content = build_sdf(TEST_SMILES)
+    with open(sdf_host_path, "w", encoding="utf-8") as f:
+        f.write(sdf_content)
+    print(f"Written SDF ({len(TEST_SMILES)} molecules) to: {sdf_host_path}")
+    print(f"SDF path in VM: {SDF}")
+    print(f"Output dir: {HOST_OUT}")
 
     for label, raw_cmd in COMMANDS.items():
         ok = run_on_vm(raw_cmd, label)

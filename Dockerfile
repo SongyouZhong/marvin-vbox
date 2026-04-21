@@ -20,9 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 安装 Python 依赖
+# 安装 Python 依赖（rdkit wheel 较大，设置 600s 超时）
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages --timeout 600 -r requirements.txt
 
 # 复制应用代码
 COPY app/ ./app/
