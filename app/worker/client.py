@@ -228,7 +228,7 @@ class WorkerClient:
         payload = {
             "task_id": task_id,
             "worker_id": self.worker_id,
-            "status": "completed",
+            "status": "success",
             "result": result
         }
 
